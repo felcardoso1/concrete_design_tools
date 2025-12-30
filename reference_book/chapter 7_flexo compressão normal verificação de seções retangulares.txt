@@ -1,0 +1,277 @@
+! 
+! 
+!Flexo-Compressão Normal: Verificação 
+!Seções retangulares com várias camadas de armadura 
+!O programa está limitado a 20 camadas 
+! 
+! 
+!PROGRAMA PRINCIPAL 
+! 
+!Declarando variáveis reais de dupla precisão 
+IMPLICIT REAL*8(A-H,O-Z) 
+!Variáveis públicas 
+COMMON /A1/ ni(20),beta(20) 
+COMMON /A2/ n,nl 
+COMMON /A3/ delta,ani,ami,fyd,fcd,es 
+COMMON /A4/ alfac,alamb,e0,eu,akapa 
+! 
+! 
+!Abertura do arquivo de dados 
+OPEN(1,FILE='DADOS.TXT') 
+! 
+!LEITURA DOS DADOS 
+! 
+!Os dados são lidos do arquivo DADOS.TXT 
+!Cada dado deve estar em uma linha do arquivo 
+!Resistência característica à compressão do concreto em MPa 
+read(1,*)fck 
+! 
+!Tensão de escoamento característica do aço em MPa 
+read(1,*)fyk 
+! 
+!Módulo de elasticidade do aço em GPa 
+read(1,*)es 
+! 
+!Coeficientes parciais de segurança: 
+!para o concreto 
+read(1,*)gamac 
+!para o aço 
+read(1,*)gamas 
+! 
+!Dados da seção transvesral: 
+!Largura em cm 
+read(1,*)b 
+!Altura em cm 
+read(1,*)h 
+!Distância d’ 
+read(1,*)dl 
+! 
+!Área total de aço na seção 
+read(1,*)aas 
+! 
+!Número de camadas de armadura:
+!A seção deve ter, no mínimo, duas camadas de armadura 
+!nl>=2 
+read(1,*)nl 
+! 
+!Número de barras das camadas de armadura: 
+!As camadas são numeradas de baixo para cima 
+!Cada camada deve ter, no mínimo, duas barras 
+do i=1,nl 
+ read(1,*)ni(i) 
+end do 
+! 
+!Esforço normal de cálculo Nd 
+!Forneça um valor positivo para Nd 
+read(1,*)aand 
+! 
+! 
+!FIM DA ENTRADA DE DADOS 
+! 
+!INÍCIO DOS CÁLCULOS 
+! 
+!Parâmetros do diagrama retangular 
+If(fck<=50) Then 
+ alamb=0.8 
+ alfac=0.85 
+ eu=3.5 
+ e0=2 
+Else 
+ alamb=0.8-(fck-50)/400 
+ alfac=0.85*(1-(fck-50)/200) 
+ eu=2.6+35*((90-fck)/100)**4 
+ e0=2+0.085*((fck-50)**0.53) 
+End If 
+!Parâmetro kapa que define o ponto com deformação igual a eo no domínio 5 
+akapa=1-e0/eu 
+! 
+!Conversão de unidades: transformando para kN e cm 
+fck=fck/10 
+fyk=fyk/10 
+es=100*es 
+! 
+!Resistências de cálculo 
+fcd=fck/gamac 
+tcd=alfac*fcd 
+fyd=fyk/gamas 
+! 
+!Cálculo do número total de barras na seção 
+n=0 
+do i=1,nl 
+ n=n+ni(i) 
+end do 
+! 
+!Parâmetro geométrico 
+delta=dl/h 
+! 
+!Área da seção de concreto 
+ac=b*h 
+! 
+!Taxa mecânica de armadura 
+w=aas*fyd/(ac*tcd) 
+! 
+!Esforço normal reduzido 
+ani=aand/(ac*tcd) 
+! 
+!Esforço normal máximo que a seção resiste em compressão simples 
+! 
+esi=e0/1000 
+Call Tensao(esi,tsd0) 
+animax=1+w*tsd0/fyd 
+! 
+!Verificação 
+If (ani>animax)Then 
+ write(*,10) 
+10 format(//,5x,'A secao nao suporta o esforco normal dado.') 
+ Goto 100 
+End If 
+!Montagem do vetor beta 
+!Ver equação (2.2.5) do Volume 3 de Curso de Concreto Armado 
+do i=1,nl 
+ beta(i)=delta+(nl-i)*(1-2*delta)/(nl-1) 
+end do 
+! 
+!Processo iterativo da bissecante 
+! 
+!Determinação do intervalo solução 
+!Valor inicial para a linha neutra adimensional qsi=x/h 
+qi=0 
+!Chamar sub-rotina para calcular o valor da função fi=f(qi) 
+Call Funcao(w,qi,rc,bc,soma1,soma2,fi) 
+! 
+!Valor final para a linha neutra adimensional qsi=x/h 
+qf=1000 
+!Chamar sub-rotina para calcular o valor da função ff=f(qf) 
+Call Funcao(w,qf,rc,bc,soma1,soma2,ff) 
+prod=fi*ff 
+!Modificando os extremos do intervalo solução até que prod<=0 
+Do While (prod>0) 
+ qi=qf 
+ fi=ff 
+ qf=10*qf 
+ Call Funcao(w,qf,rc,bc,soma1,soma2,ff) 
+ prod=fi*ff 
+End do 
+!O intervalo solução foi definido 
+!A linha neutra qsi fica entre [qi,qf] 
+! 
+!Processo iterativo da bissecante 
+fk = 1 
+Do While (Abs(fk)>0.001) 
+ qk=(qi*ff-qf*fi)/(ff-fi) 
+ Call Funcao(w,qk,rc,bc,soma1,soma2,fk) 
+ prod=fk*fi 
+ If (prod>=0) Then 
+ qi=qk 
+ fi=fk
+ Else 
+ qf=qk 
+ ff=fk 
+ End If 
+End do 
+! 
+!Convergência alcançada 
+!qk é a raiz da função f(qsi) dada na equação (3.2.1) do Volume 3 de Curso de 
+!Concreto Armado 
+! 
+!Cálculo do momento fletor reduzido conforme a equação (3.2.2) do Volume 3 
+! 
+ami=0.5*ani-rc*bc-w*soma2/(n*fyd) 
+! 
+!Momento fletor dimensional 
+! 
+amud=ami*ac*h*tcd 
+!Passagem para kNm 
+amud=amud/100 
+! 
+!Mostrando o resultado 
+write(*,20)amud 
+20 format(//,5x,'Momento fletor de ruina de calculo (kNm)=',f7.2) 
+! 
+!Encerrando o programa 
+100 a=0 
+End 
+! 
+! 
+Subroutine Funcao(w,qsi,rc,bc,soma1,soma2,f) 
+IMPLICIT REAL*8(A-H,O-Z) 
+!Variáveis públicas 
+COMMON /A1/ ni(20),beta(20) 
+COMMON /A2/ n,nl 
+COMMON /A3/ delta,ani,ami,fyd,fcd,es 
+COMMON /A4/ alfac,alamb,e0,eu,akapa 
+!Calcula o valor da função f(qsi) dada na equação (3.2.1) do Volume 3 de Curso de 
+!Concreto Armado 
+! 
+!w é a taxa mecânica de armadura 
+!qsi=x/h é a profundidade relativa da linha neutra 
+!rc é a resultante de compressão do concreto adimensional dada na equação (2.4.4) 
+!bc é a posição da resultante adimensional dada na equação (2.4.5) 
+!soma1 é o somatório que aparece na equação (3.2.1) 
+!soma2 é o somatatório que aparece na equação (3.2.2) 
+!f é o resultado da equação (3.2.1) 
+! 
+!Os parâmetro de entrada são w e qsi, pois as demais variáveis são públicas. 
+!Os parâmetros rc,bc,soma1,soma2,f são calculados nessa sub-rotina 
+! 
+! 
+!Constantes para o cálculo das deformações das camadas da armadura 
+ql= eu*beta(1)/(eu+10) 
+If (qsi<=ql)Then 
+ !A linha neutra está no domínio 2 
+ c=0.01/(beta(1)-qsi) 
+ElseIf (qsi<=1)Then
+ !A linha neutra está nos domínios 3,4 e 4a 
+ c=eu/(1000*qsi) 
+Else 
+ !A linha neutra está no domínio 5 
+ c=(e0/1000)/(qsi-akapa) 
+End If 
+!Resultante de compressão no concreto 
+If (qsi<1/alamb)Then 
+ rc=alamb*qsi 
+ bc=0.5*alamb*qsi 
+Else 
+ rc=1 
+ bc=0.5 
+End If 
+! 
+soma1=0 
+soma2=0 
+do i=1,nl 
+ esi=c*(qsi-beta(i)) 
+ Call Tensao(esi,tsi) 
+ soma1=soma1+ni(i)*tsi 
+ soma2=soma2+ni(i)*beta(i)*tsi 
+end do 
+!Funcao f(qsi) 
+f=ani-rc-w*soma1/(n*fyd) 
+Return 
+End 
+! 
+! 
+Subroutine Tensao(esl, tsl) 
+IMPLICIT REAL*8(A-H,O-Z) 
+!Variáveis públicas 
+COMMON /A3/ delta,ani,ami,fyd,fcd,es 
+! 
+!Calcula a tensão no aço 
+!es = módulo de elasticidade do aço em kN/cm2 
+!esl = deformação de entrada 
+!fyd = tensão de escoamento de cálculo em kN/cm2 
+!tsl = tensão de saída em kN/cm2 
+! 
+!Trabalhando com deformação positiva 
+ess=Abs(esl) 
+eyd=fyd/es 
+If (ess<eyd)Then 
+ tsl= es*ess 
+Else 
+ tsl=fyd 
+End If 
+!Trocando o sinal se necessário 
+If (esl<0) Then 
+ tsl=-tsl 
+End If 
+Return 
+End

@@ -1,0 +1,190 @@
+! 
+!Dimensionamento de seções retangulares à flexão normal simples 
+! 
+!PROGRAMA PRINCIPAL 
+! 
+!Declarnado variáveis reais de dupla precisão 
+IMPLICIT REAL*8(A-H,O-Z) 
+! 
+!Abertura do arquivo de dados 
+OPEN(1,FILE='DADOS.TXT') 
+! 
+!LEITURA DOS DADOS 
+! 
+!Os dados são lidos do arquivo DADOS.TXT 
+!Cada dado deve estar em uma linha do arquivo 
+! 
+!Resistência característica à compressão do concreto em MPa 
+read(1,*)fck 
+! 
+!Tensão de escoamento característica do aço em MPa 
+read(1,*)fyk 
+! 
+!Módulo de elasticidade do aço em GPa 
+read(1,*)es 
+! 
+!Coeficientes parciais de segurança: 
+!para o concreto 
+read(1,*)gamac 
+! 
+!para o aço 
+read(1,*)gamas 
+! 
+!para o momento fletor 
+read(1,*)gamaf 
+! 
+!Coeficiente beta de redistribuição de momentos 
+read(1,*)bduct 
+! 
+!Largura da seção transversal 
+read(1,*)b 
+! 
+!Altura da seção transversal
+read(1,*)h 
+! 
+!Altura útil 
+read(1,*)d 
+! 
+!Parâmetro d! 
+read(1,*)dl 
+! 
+!Momento fletor de serviço em kNm 
+read(1,*)amk 
+! 
+! 
+!FIM DA ENTRADA DE DADOS 
+! 
+!INÍCIO DOS CÁLCULOS 
+! 
+! 
+!Parâmetros do diagrama retangular 
+If(fck<=50)Then 
+ alamb=0.8 
+ alfac=0.85 
+ eu=3.5 
+ qlim=0.8*bduct-0.35 
+Else 
+ alamb=0.8-(fck-50)/400 
+ alfac=0.85*(1-(fck-50)/200) 
+ eu=2.6+35*((90-fck)/100)**4 
+ qlim=0.8*bduct-0.45 
+End If 
+! 
+!Conversão de unidades: transformando para kN e cm 
+amk=100*amk 
+fck=fck/10 
+fyk=fyk/10 
+es=100*es 
+! 
+!Resistências de cálculo 
+fcd=fck/gamac 
+tcd=alfac*fcd 
+fyd=fyk/gamas 
+amd=gamaf*amk 
+! 
+!Parâmetro geométrico 
+delta=dl/d 
+! 
+!Momento limite 
+amilim=alamb*qlim*(1-0.5*alamb*qlim) 
+! 
+!Momento reduzido solicitante 
+ami=amd/(b*d*d*tcd) 
+! 
+If(ami<=amilim)Then 
+!Armadura simples 
+ qsi=(1-sqrt(1-2*ami))/alamb 
+ aas=alamb*qsi*b*d*tcd/fyd 
+ asl=0 
+Else
+!Armadura dupla 
+! 
+! Evitando armadura dupla no domínio 2 
+ qsia=eu/(eu+10) 
+ If(qlim<qsia)Then 
+! 
+! Está resultando armadura dupla no domínio 2. 
+! Colocar mensagem para o usuário aumentar as dimensões da seção transversal e parar o 
+processamento 
+ write(*,10) 
+10 format(//,5x,'Resultou armadura dupla no dominio 2. Aumente as dimensoes da secao transversal') 
+ goto 100 
+ End If 
+! 
+! Eliminando o caso em que qlim<delta 
+! Se isto ocorrer, a armadura de compressão estará tracionada 
+! 
+ If(qlim<=delta)Then 
+! 
+! Colocar mensagem para o usuário aumentar as dimensões da seção transversal e parar o 
+processamento 
+! 
+ write(*,20) 
+20 format(//,5x,'Aumente as dimensoes da secao transversal') 
+ goto 100 
+ End If 
+! 
+! Deformação da armadura de compressão 
+ esl=eu*(qlim-delta)/qlim 
+ esl=esl/1000 
+! Tensão na armadura de compressão 
+! Chamar subrotina 
+ Call Tensao(es,esl,fyd,tsl) 
+ asl=(ami-amilim)*b*d*tcd/((1-delta)*tsl) 
+ aas=(alamb*qlim+(ami-amilim)/(1-delta))*b*d*tcd/fyd 
+End If 
+! 
+!Armadura mínima 
+a=2./3. 
+fck=10*fck 
+fyd=10*fyd 
+If(fck<=50)Then 
+ romin=0.078*(fck**a)/fyd 
+Else 
+ romin=0.5512*Log(1+0.11*fck)/fyd 
+End If 
+If(romin<0.0015) Then 
+ romin=0.0015 
+End If 
+! 
+asmin=romin*b*h 
+If(aas<asmin) Then 
+ aas=asmin 
+End If 
+! 
+! 
+!MOSTRAR O RESULTADO NA TELA
+!Área da armadura tracionada: aas 
+!Área da armadura comprimida: asl 
+! 
+write(*,30)aas 
+30 format(//,5x,'Area da armadura tracionada=',f6.2) 
+write(*,40)asl 
+40 format(//,5x,'Area da armadura comprimida=',f6.2) 
+100 aux=0 !terminando o programa 
+End 
+! 
+! 
+SUBROUTINE Tensao(es,esl,fyd,tsl) 
+IMPLICIT REAL*8(A-H,O-Z) 
+! 
+!Calcula a tensão no aço 
+!es = módulo de elasticidade do aço em kN/cm2 
+!esl = deformação de entrada em por mil 
+!fyd = tensão de escoamento de cálculo em kN/cm2 
+!tsl = tensão de saída em kN/cm2 
+! 
+!Trabalhando com deformação positiva 
+ess=Abs(esl) 
+eyd=fyd/es 
+If(ess<eyd)Then 
+ tsl=es*ess 
+Else 
+ tsl=fyd 
+End If 
+!Trocando o sinal se necessário 
+If(esl<0)Then 
+ tsl=-tsl 
+End If 
+Return 
+End 

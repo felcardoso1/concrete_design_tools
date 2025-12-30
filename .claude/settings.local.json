@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir:*)",
+      "Bash(if not exist src mkdir src)",
+      "Bash(if not exist bin mkdir bin)",
+      "Bash(if not exist tests mkdir tests)",
+      "Bash(./bin/flexao.exe:*)",
+      "Bash(fpc:*)",
+      "Bash(./bin/flexaot.exe:*)",
+      "Bash(./bin/cisalhamento.exe:*)",
+      "Bash(./bin/torcao.exe:*)",
+      "Bash(./bin/flexo_tracao.exe:*)",
+      "Bash(./bin/flexo_compressao.exe:*)"
+    ]
+  }
+}

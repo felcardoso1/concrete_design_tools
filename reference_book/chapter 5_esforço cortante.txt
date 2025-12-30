@@ -1,0 +1,137 @@
+! 
+!Dimensionamento ao Esforço Cortante 
+! 
+!PROGRAMA PRINCIPAL 
+! 
+!Declarando variáveis reais de dupla precisão 
+IMPLICIT REAL*8(A-H,O-Z) 
+! 
+!Abertura do arquivo de dados 
+OPEN(1,FILE='DADOS.TXT')
+! 
+!LEITURA DOS DADOS 
+! 
+!Os dados são lidos do arquivo DADOS.TXT 
+!Cada dado deve estar em uma linha do arquivo 
+! 
+! 
+! 
+!ENTRADA DE DADOS 
+! 
+! 
+!Resistência característica à compressão do concreto em MPa 
+read(1,*)fck 
+! 
+!Tensão de escoamento característica do aço em MPa 
+read(1,*)fyk 
+! 
+!Coeficientes parciais de segurança: 
+!para o concreto 
+read(1,*)gamac 
+! 
+!para o aço 
+read(1,*)gamas 
+! 
+!para o esforço cortante 
+read(1,*)gamaf 
+! 
+!Largura da seção: bw em cm 
+read(1,*)bw 
+! 
+!Altura util em cm 
+read(1,*)d 
+! 
+!Esfoço cortante de serviço em kN 
+read(1,*)vk 
+! 
+! 
+!FIM DA ENTRADA DE DADOS 
+! 
+!INÍCIO DOS CÁLCULOS 
+! 
+!Resistências e cortante de cálculo 
+! 
+fcd=fck/gamac 
+fyd=fyk/gamas 
+vd=gamaf*vk 
+! 
+!Tensão convencional de cisalhamento 
+! 
+twd=vd/(bw*d) 
+!Passando para MPa 
+twd=10*twd 
+! 
+!Tensão de cisalhamento última 
+av=1-fck/250 
+twu=0.27*av*fcd 
+! 
+!Verificação do esmagamento das bielas 
+If(twd>twu)Then 
+! Está ocorrendo ruptura das bielas 
+! Colocar mensagem para o usuário aumentar as dimensões da seção transversal e 
+! parar o processamento 
+! 
+ write(*,10) 
+10 format(//,2x,'Esmagamento da biela de compressão. Aumente as dimensões da seção transversal.') 
+ goto 100 
+End If 
+! 
+!Tensão Talc de redução da armadura 
+!Se gamac=1.4 irão resultar as expressões (7.4.6) e (7.4.7) do Volume 1 de Curso 
+!de Concreto Armado 
+! 
+If(fck<=50) Then 
+ a=2./3. 
+ tc=0.126*(fck**a)/gamac 
+Else 
+ tc=0.8904*Log(1+0.11*fck)/gamac 
+End If 
+! 
+!Tensão Tald para cálculo da armadura 
+! 
+td=1.11*(twd-tc) 
+If(td<0)Then 
+ td=0 
+End If 
+! 
+!Limitação da tensão de escoamento do aço conforme a NBR-6118 
+! 
+If(fyd>435)Then 
+fyd=435 
+End If 
+! 
+!Cálculo da armadura 
+asw=100*bw*td/fyd 
+! 
+!Cálculo da armadura mínima: 
+!A tensão fyk deve ser menor ou igual a 500 MPa 
+fykmax=fyk 
+If(fykmax>500)Then 
+ fykmax= 500 
+End If 
+! 
+!Resistência média à tração do concreto 
+! 
+If(fck<=50)Then 
+ a=2./3. 
+ fctm=0.3*(fck**a) 
+Else 
+ fctm=2.12*Log(1+0.11*fck) 
+End If 
+! 
+!Taxa mínima de armadura (ver equação (7.4.13) do Volume 1) 
+romin=0.2*fctm/fykmax 
+aswmin=romin*100*bw
+! 
+!Verificação 
+! 
+If(asw<aswmin)Then 
+ asw=aswmin 
+End If 
+! 
+!MOSTRAR O RESULTADO NA TELA 
+! 
+write(*,20)asw 
+20 format(//,5x,'Area de estribos (cm2/m)=',f6.2) 
+100 aux=0 !terminando o programa 
+End 

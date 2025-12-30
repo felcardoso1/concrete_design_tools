@@ -1,0 +1,257 @@
+! 
+!Dimensionamento de seções retangulares à Flexo-Tração Normal com Armaduras Assimétricas 
+! 
+!PROGRAMA PRINCIPAL 
+! 
+!Declarando variáveis reais de dupla precisão 
+IMPLICIT REAL*8(A-H,O-Z) 
+! 
+!Abertura do arquivo de dados 
+OPEN(1,FILE='DADOS.TXT') 
+! 
+!LEITURA DOS DADOS 
+! 
+!Os dados são lidos do arquivo DADOS.TXT 
+!Cada dado deve estar em uma linha do arquivo
+!Resistência característica à compressão do concreto em MPa 
+read(1,*)fck 
+! 
+!Tensão de escoamento característica do aço em MPa 
+read(1,*)fyk 
+! 
+!Módulo de elasticidade do aço em GPa 
+read(1,*)es 
+! 
+!Coeficientes parciais de segurança: 
+!para o concreto 
+read(1,*)gamac 
+! 
+!para o aço 
+read(1,*)gamas 
+! 
+!para o momento fletor 
+read(1,*)gamaf 
+! 
+!Coeficiente beta de redistribuição de momentos 
+read(1,*)bduct 
+! 
+!Largura da seção transversal 
+read(1,*)b 
+! 
+!Altura da seção transversal 
+read(1,*)h 
+! 
+!Altura útil 
+read(1,*)d 
+! 
+!Parâmetro d' (distância da armadura A's até a borda da seção) 
+read(1,*)dl 
+! 
+!Momento fletor de serviço em kNm 
+read(1,*)amk 
+! 
+!Esforço normal de serviço em kN 
+read(1,*)ank 
+! 
+!FIM DA ENTRADA DE DADOS 
+! 
+!INÍCIO DOS CÁLCULOS 
+! 
+!Parâmetros do diagrama retangular 
+If (fck<=50) Then 
+ alamb=0.8 
+ alfac=0.85 
+ eu=3.5 
+ qlim=0.8*bduct-0.35 
+Else 
+ alamb=0.8-(fck-50)/400 
+ alfac=0.85*(1-(fck-50)/200) 
+ eu=2.6+35*((90-fck)/100)**4 
+ qlim=0.8*bduct-0.45 
+End If 
+!
+!Conversão de unidades: transformando para kN e cm 
+amk=100*amk 
+fck=fck/10 
+fyk=fyk/10 
+es=100*es 
+! 
+!Resistências de cálculo 
+fcd=fck/gamac 
+tcd=alfac*fcd 
+fyd=fyk/gamas 
+! 
+!Esforços solicitantes de cálculo 
+amd=gamaf*amk 
+aand=gamaf*ank 
+! 
+!Parâmetro geométrico 
+delta=dl/d 
+! 
+!Esforços solicitantes reduzidos 
+ani=aand/(b*d*tcd) 
+ami=amd/(b*d*d*tcd) 
+! 
+!Realização do dimensionamento 
+! 
+!Momento reduzido que define o final do domínio 1 
+! 
+ami0=0.5*(1-delta)*ani 
+! 
+If (ami<=ami0) Then 
+! O problema será resolvido no domínio 1 
+! Trata-se de flexo-tração com pequena excentricidade 
+! Variável para indicar o domínio 
+ idom=1 
+! 
+! Taxas mecânicas de armadura 
+ wl=(ami0-ami)/(1-delta) 
+ w=(ami0+ami)/(1-delta) 
+End If 
+! 
+If (ami>ami0) Then 
+! O problema será resolvido nos domínios 2 e 3 
+! Trata-se de flexo-tração com grande excentricidade 
+! Variável para indicar o domínio 
+ idom=2 
+! 
+! Momento equivalente 
+ amisd=ami-ami0 
+! Momento limite 
+ amilim=alamb*qlim*(1-0.5*alamb*qlim) 
+! 
+ If (amisd<=amilim) Then 
+! Armadura simples 
+ qsi=(1-Sqrt(1-2*amisd))/alamb 
+ w=alamb*qsi+ani 
+ wl=0 
+ Else 
+! Armadura dupla 
+! Evitando armadura dupla no domínio 2 
+ qsia=eu/(eu+10) 
+ If (qlim<qsia) Then 
+! 
+! Está resultando armadura dupla no domínio 2. 
+! Colocar mensagem para o usuário aumentar as dimensões da seção transversal e parar o 
+processamento 
+! 
+ write(*,10) 
+10 format(//,5x,'Resultou armadura dupla no domínio 2. Aumente as dimensoes da secao 
+transversal.') 
+ Goto 100 
+ End If 
+! 
+! Eliminando o caso em que qlim<delta 
+! Se isto ocorrer, a armadura de compressão estará tracionada 
+! 
+ If (qlim<=delta) Then 
+! 
+! Colocar mensagem para o usuário aumentar as dimensões da seção transversal e parar o 
+processamento 
+! 
+ write(*,20) 
+20 format(//,5x,'Aumente as dimensoes da secao transversal.') 
+ Goto 100 
+ End If 
+! 
+! Deformação da armadura de compressão 
+ esl=eu*(qlim-delta)/qlim 
+ esl=esl/1000 
+! Tensão na armadura de compressão 
+! Chamar sub-rotina 
+ Call Tensao(es,esl,fyd,tsl) 
+! 
+! Taxas mecânicas de armadura 
+ wl=(amisd-amilim)*fyd/((1-delta)*tsl) 
+ w=alamb*qlim+(amisd-amilim)/(1-delta)+ani 
+ End If 
+End If 
+! 
+!Áreas das armaduras 
+aas=w*b*d*tcd/fyd 
+asl=wl*b*d*tcd/fyd 
+! 
+! 
+!Armadura mínima 
+!Voltando para MPa 
+fck=10*fck 
+fyd=10*fyd 
+! 
+!Romin da tração simples 
+! 
+a=2./3. 
+If (fck<=50) Then 
+ r1min=0.39*(fck**a)/fyd 
+Else 
+ r1min=2.756*Log(1+0.11*fck)/fyd
+End If 
+! 
+!Romin da flexão simples 
+! 
+If(fck<=50) Then 
+ r2min=0.078*(fck**a)/fyd 
+Else 
+ r2min=0.5512*Log(1+0.11*fck)/fyd 
+End If 
+If (r2min<0.0015) Then 
+ r2min=0.0015 
+End If 
+! 
+If (idom.Eq.2) Then 
+! A solução do problema caiu no domínio 2 ou 3 
+ romin=r2min 
+Else 
+! A solução caiu no domínio 1 
+! A taxa mínima será interpolada entre r1min e r2min 
+ romin=r2min+(r1min-r2min)*(ami0-ami)/ami0 
+End If 
+!Armadura mínima 
+! 
+asmin=romin*b*h 
+! 
+If ((idom.Eq.2) .And. (aas<asmin)) Then 
+! Domínios 2 e 3: apenas aas respeita a armadura mínima 
+ aas=asmin 
+End If 
+! 
+If (idom.Eq.1) Then 
+! Domínio 1: a soma aas+asl respeita a armadura mínima 
+ astot=aas+asl 
+ If (astot<asmin) Then 
+ aas=aas*asmin/astot 
+ asl=asl*asmin/astot 
+ End If 
+End If 
+! 
+! 
+!MOSTRAR O RESULTADO 
+! 
+write(*,30)aas,asl 
+30 format(//,5x,'As (cm2)=',f6.2,4x,'Asl (cm2)=',f6.2) 
+!Encerrando o programa 
+100 a=0 
+End 
+! 
+SUBROUTINE Tensao(es,esl,fyd,tsl) 
+IMPLICIT REAL*8(A-H,O-Z) 
+! 
+!Calcula a tensão no aço 
+!es = módulo de elasticidade do aço em kN/cm2 
+!esl = deformação de entrada 
+!fyd = tensão de escoamento de cálculo em kN/cm2 
+!tsl = tensão de saída em kN/cm2 
+!
+!Trabalhando com deformação positiva 
+ess=Abs(esl) 
+eyd=fyd/es 
+If(ess<eyd)Then 
+ tsl=es*ess 
+Else 
+ tsl=fyd 
+End If 
+!Trocando o sinal se necessário 
+If(esl<0)Then 
+ tsl=-tsl 
+End If 
+Return 
+End 
