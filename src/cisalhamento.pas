@@ -5,6 +5,13 @@ program Cisalhamento;
 uses
   SysUtils, Math;
 
+const
+  EXIT_SUCCESS = 0;
+  EXIT_CALC_ERROR = 1;      // Calculation error (insufficient section, etc.)
+  EXIT_INVALID_ARGS = 2;     // Invalid arguments/parameters
+  EXIT_DOMAIN_4 = 3;         // Domain 4 (brittle failure)
+  EXIT_INVALID_RANGE = 4;    // Parameter out of valid range
+
 var
   // Input variables
   bw, d: Double;
@@ -20,6 +27,18 @@ var
   tc, td: Double;           // Concrete contribution and design stress
   aswmin: Double;           // Minimum stirrup area
   verificacao: string;      // Status message
+  warnings: string;          // Accumulated warnings (only shown in verbose/JSON)
+
+// Field alias resolution
+function ResolveFieldName(const fieldName: string): string;
+begin
+  Result := LowerCase(fieldName);
+  // No aliases for cisalhamento currently, but structure allows for future additions
+  if (Result = 'asw') then
+    Result := 'Asw'
+  else
+    Result := fieldName;
+end;
 
 procedure ShowUsage;
 begin
@@ -43,7 +62,20 @@ begin
   WriteLn(StdErr, '  --json     JSON format for structured parsing');
   WriteLn(StdErr, '  --field=X  Output only specific field');
   WriteLn(StdErr, '             Valid fields: Asw, twd, twu, tc, aswmin, verificacao');
-  Halt(2);
+  WriteLn(StdErr, '             Use --field=list to show all fields and aliases');
+  WriteLn(StdErr, '  --version  Show version information');
+  WriteLn(StdErr, '  --help-all Show all available tools');
+  WriteLn(StdErr, '');
+  WriteLn(StdErr, 'Exit Codes:');
+  WriteLn(StdErr, '  0  Success');
+  WriteLn(StdErr, '  1  Calculation error (compression strut crushing)');
+  WriteLn(StdErr, '  2  Invalid arguments');
+  WriteLn(StdErr, '  4  Invalid parameter range');
+  WriteLn(StdErr, '');
+  WriteLn(StdErr, 'Examples:');
+  WriteLn(StdErr, '  cisalhamento --bw=20 --d=46 --fck=25 --fyk=500 --vk=100');
+  WriteLn(StdErr, '  cisalhamento --bw=20 --d=46 --fck=25 --fyk=500 --vk=100 --field=Asw');
+  Halt(EXIT_INVALID_ARGS);
 end;
 
 function GetParamValue(const name: string): string;
@@ -73,16 +105,80 @@ begin
       Exit(True);
 end;
 
+procedure ShowVersion;
+begin
+  WriteLn('cisalhamento v1.0.0');
+  WriteLn('NBR 6118:2014 compliant');
+  WriteLn('Compiled: 2025-12-30');
+  Halt(EXIT_SUCCESS);
+end;
+
+procedure ShowFieldList;
+begin
+  WriteLn('Available fields: Asw, twd, twu, tc, aswmin, verificacao');
+  WriteLn('Aliases: (none)');
+  Halt(EXIT_SUCCESS);
+end;
+
+procedure ValidateParameters;
+begin
+  warnings := '';  // Initialize empty
+  
+  // Hard errors (exit immediately)
+  if fck < 10 then
+  begin
+    WriteLn(StdErr, 'ERRO: fck must be >= 10 MPa (received: ', fck:0:1, ' MPa)');
+    WriteLn(StdErr, 'NBR 6118 valid range: 10-90 MPa');
+    Halt(EXIT_INVALID_RANGE);
+  end;
+  
+  if bw < 9 then
+  begin
+    WriteLn(StdErr, 'ERRO: bw must be >= 9 cm (received: ', bw:0:1, ' cm)');
+    Halt(EXIT_INVALID_RANGE);
+  end;
+  
+  if d <= 0 then
+  begin
+    WriteLn(StdErr, 'ERRO: d must be positive (received: ', d:0:1, ' cm)');
+    Halt(EXIT_INVALID_RANGE);
+  end;
+  
+  if fyk <= 0 then
+  begin
+    WriteLn(StdErr, 'ERRO: fyk must be positive (received: ', fyk:0:1, ' MPa)');
+    Halt(EXIT_INVALID_RANGE);
+  end;
+  
+  if vk <= 0 then
+  begin
+    WriteLn(StdErr, 'ERRO: vk must be positive (received: ', vk:0:2, ' kN)');
+    Halt(EXIT_INVALID_RANGE);
+  end;
+  
+  // Soft warnings (accumulate, show only in verbose/JSON)
+  if fck > 90 then
+    warnings := warnings + 'WARNING: fck=' + FloatToStr(fck) + 
+               ' MPa exceeds 90 MPa. Formulas valid up to 90 MPa.' + LineEnding;
+end;
+
 procedure ParseArguments;
 var
   s: string;
 begin
+  // Handle special flags that don't need parameters first
+  if HasFlag('version') then
+    ShowVersion;
+  
+  fieldOutput := GetParamValue('field');
+  if (fieldOutput = 'list') then
+    ShowFieldList;
+  
   if HasFlag('help') or (ParamCount = 0) then
     ShowUsage;
 
   jsonOutput := HasFlag('json');
   verboseOutput := HasFlag('verbose');
-  fieldOutput := GetParamValue('field');
 
   // Required parameters
   s := GetParamValue('bw');
@@ -148,7 +244,9 @@ begin
   // Check for crushing of compression strut
   if twd > twu then
   begin
-    verificacao := 'ERRO: Esmagamento da biela de compressao';
+    verificacao := 'ERRO: Compression strut crushing' + LineEnding +
+                   'CURRENT: bw=' + FloatToStr(bw) + 'cm, d=' + FloatToStr(d) + 'cm, Vk=' + FloatToStr(vk) + 'kN, fck=' + FloatToStr(fck) + 'MPa' + LineEnding +
+                   'SUGGESTION: Increase section dimensions (bw or d) OR reduce shear force';
     asw := 0;
     tc := 0;
     td := 0;
@@ -208,27 +306,30 @@ end;
 procedure OutputResults;
 var
   verif_suffix: string;
+  resolvedField: string;
 begin
   // Field-specific output (highest priority)
   if fieldOutput <> '' then
   begin
-    if (fieldOutput = 'Asw') or (fieldOutput = 'asw') then
+    resolvedField := ResolveFieldName(fieldOutput);
+    
+    if (resolvedField = 'Asw') or (LowerCase(resolvedField) = 'asw') then
       WriteLn(asw:0:2)
-    else if (fieldOutput = 'twd') then
+    else if (LowerCase(resolvedField) = 'twd') then
       WriteLn(twd:0:4)
-    else if (fieldOutput = 'twu') then
+    else if (LowerCase(resolvedField) = 'twu') then
       WriteLn(twu:0:4)
-    else if (fieldOutput = 'tc') then
+    else if (LowerCase(resolvedField) = 'tc') then
       WriteLn(tc:0:4)
-    else if (fieldOutput = 'aswmin') then
+    else if (LowerCase(resolvedField) = 'aswmin') then
       WriteLn(aswmin:0:2)
-    else if (fieldOutput = 'verificacao') then
+    else if (LowerCase(resolvedField) = 'verificacao') then
       WriteLn(verificacao)
     else
     begin
       WriteLn(StdErr, 'Error: Unknown field "', fieldOutput, '"');
       WriteLn(StdErr, 'Valid fields: Asw, twd, twu, tc, aswmin, verificacao');
-      Halt(2);
+      Halt(EXIT_INVALID_ARGS);
     end;
     Exit;
   end;
@@ -242,7 +343,11 @@ begin
     WriteLn('  "twu": ', twu:0:4, ',');
     WriteLn('  "tc": ', tc:0:4, ',');
     WriteLn('  "aswmin": ', aswmin:0:2, ',');
-    WriteLn('  "verificacao": "', verificacao, '"');
+    WriteLn('  "verificacao": "', verificacao, '",');
+    if warnings <> '' then
+      WriteLn('  "warnings": "', StringReplace(warnings, LineEnding, ' ', [rfReplaceAll]), '"')
+    else
+      WriteLn('  "warnings": null');
     WriteLn('}');
     Exit;
   end;
@@ -261,6 +366,12 @@ begin
     WriteLn('Armadura minima (Asw,min):      ', aswmin:8:2, ' cm2/m');
     WriteLn('');
     WriteLn('Verificacao: ', verificacao);
+    if warnings <> '' then
+    begin
+      WriteLn('');
+      WriteLn('WARNINGS:');
+      Write(warnings);
+    end;
     WriteLn('============================================');
     Exit;
   end;
@@ -287,19 +398,20 @@ begin
 
   try
     ParseArguments;
+    ValidateParameters;
     Calculate;
     OutputResults;
 
     // Exit code based on verification
     if Pos('ERRO', verificacao) > 0 then
-      Halt(1)
+      Halt(EXIT_CALC_ERROR)
     else
-      Halt(0);
+      Halt(EXIT_SUCCESS);
   except
     on E: Exception do
     begin
       WriteLn(StdErr, 'Error: ', E.Message);
-      Halt(1);
+      Halt(EXIT_CALC_ERROR);
     end;
   end;
 end.

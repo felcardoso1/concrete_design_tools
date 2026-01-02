@@ -1,6 +1,27 @@
-# Compiled binaries
+# Pascal/Free Pascal Compiler outputs
 *.exe
 *.o
+*.ppu
+*.a
+*.compiled
+*.or
+*.res
+*.rsj
+*.rst
+*.s
+*.obj
+*.dcu
+*.dcp
+*.dof
+*.dpk
+*.dproj
+*.local
+*.identcache
+*.tvsconfig
+
+# Compiled binaries directory
+bin/*.exe
+bin/*.o
 
 # Python
 __pycache__/
@@ -32,4 +53,5 @@ nul
 
 # Test artifacts
 test_sandbox/*.exe
+
 

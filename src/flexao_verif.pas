@@ -5,6 +5,13 @@ program FlexaoVerif;
 uses
   SysUtils, Math;
 
+const
+  EXIT_SUCCESS = 0;
+  EXIT_CALC_ERROR = 1;      // Calculation error (insufficient section, etc.)
+  EXIT_INVALID_ARGS = 2;     // Invalid arguments/parameters
+  EXIT_DOMAIN_4 = 3;         // Domain 4 (brittle failure)
+  EXIT_INVALID_RANGE = 4;    // Parameter out of valid range
+
 var
   // Input variables
   bw, d, dl: Double;
@@ -19,6 +26,18 @@ var
   x: Double;                // Neutral axis depth
   dominio: Integer;         // Strain domain
   verificacao: string;      // Status message
+  warnings: string;          // Accumulated warnings (only shown in verbose/JSON)
+
+// Field alias resolution
+function ResolveFieldName(const fieldName: string): string;
+begin
+  Result := LowerCase(fieldName);
+  // No specific aliases for flexao_verif
+  if (Result = 'mrd') then
+    Result := 'Mrd'
+  else
+    Result := fieldName;
+end;
 
 // Subroutine to calculate stress in steel
 function CalcularTensaoAco(es, esl, fyd: Double): Double;
@@ -60,7 +79,20 @@ begin
   WriteLn(StdErr, '  --json     JSON format for structured parsing');
   WriteLn(StdErr, '  --field=X  Output only specific field');
   WriteLn(StdErr, '             Valid fields: Mrd, x, dominio, verificacao');
-  Halt(2);
+  WriteLn(StdErr, '             Use --field=list to show all fields and aliases');
+  WriteLn(StdErr, '  --version  Show version information');
+  WriteLn(StdErr, '  --help-all Show all available tools');
+  WriteLn(StdErr, '');
+  WriteLn(StdErr, 'Exit Codes:');
+  WriteLn(StdErr, '  0  Success');
+  WriteLn(StdErr, '  1  Calculation error');
+  WriteLn(StdErr, '  2  Invalid arguments');
+  WriteLn(StdErr, '  4  Invalid parameter range');
+  WriteLn(StdErr, '');
+  WriteLn(StdErr, 'Examples:');
+  WriteLn(StdErr, '  flexao_verif --bw=20 --d=46 --As=8.0 --fck=25 --fyk=500');
+  WriteLn(StdErr, '  flexao_verif --bw=20 --d=46 --As=8.0 --fck=25 --fyk=500 --field=Mrd');
+  Halt(EXIT_INVALID_ARGS);
 end;
 
 function GetParamValue(const name: string): string;
@@ -90,16 +122,89 @@ begin
       Exit(True);
 end;
 
+procedure ShowVersion;
+begin
+  WriteLn('flexao_verif v1.0.0');
+  WriteLn('NBR 6118:2014 compliant');
+  WriteLn('Compiled: 2025-12-30');
+  Halt(EXIT_SUCCESS);
+end;
+
+procedure ShowFieldList;
+begin
+  WriteLn('Available fields: Mrd, x, dominio, verificacao');
+  WriteLn('Aliases: (none)');
+  Halt(EXIT_SUCCESS);
+end;
+
+procedure ValidateParameters;
+var
+  fck_orig: Double;
+begin
+  warnings := '';  // Initialize empty
+  fck_orig := fck;  // Store original fck for error messages
+  
+  // Hard errors (exit immediately)
+  if fck < 10 then
+  begin
+    WriteLn(StdErr, 'ERRO: fck must be >= 10 MPa (received: ', fck:0:1, ' MPa)');
+    WriteLn(StdErr, 'NBR 6118 valid range: 10-90 MPa');
+    Halt(EXIT_INVALID_RANGE);
+  end;
+  
+  if bw < 9 then
+  begin
+    WriteLn(StdErr, 'ERRO: bw must be >= 9 cm (received: ', bw:0:1, ' cm)');
+    Halt(EXIT_INVALID_RANGE);
+  end;
+  
+  if d <= 0 then
+  begin
+    WriteLn(StdErr, 'ERRO: d must be positive (received: ', d:0:1, ' cm)');
+    Halt(EXIT_INVALID_RANGE);
+  end;
+  
+  if fyk <= 0 then
+  begin
+    WriteLn(StdErr, 'ERRO: fyk must be positive (received: ', fyk:0:1, ' MPa)');
+    Halt(EXIT_INVALID_RANGE);
+  end;
+  
+  if as_given <= 0 then
+  begin
+    WriteLn(StdErr, 'ERRO: As must be positive (received: ', as_given:0:2, ' cm²)');
+    Halt(EXIT_INVALID_RANGE);
+  end;
+  
+  if asl_given < 0 then
+  begin
+    WriteLn(StdErr, 'ERRO: Asl must be non-negative (received: ', asl_given:0:2, ' cm²)');
+    Halt(EXIT_INVALID_RANGE);
+  end;
+  
+  // Soft warnings (accumulate, show only in verbose/JSON)
+  if fck > 90 then
+    warnings := warnings + 'WARNING: fck=' + FloatToStr(fck) + 
+               ' MPa exceeds 90 MPa. Formulas valid up to 90 MPa.' + LineEnding;
+end;
+
 procedure ParseArguments;
 var
   s: string;
 begin
+  // Handle special flags that don't need parameters first
+  if HasFlag('version') then
+    ShowVersion;
+  
+  fieldOutput := GetParamValue('field');
+  if (fieldOutput = 'list') then
+    ShowFieldList;
+  
   if HasFlag('help') or (ParamCount = 0) then
     ShowUsage;
 
   jsonOutput := HasFlag('json');
   verboseOutput := HasFlag('verbose');
-  fieldOutput := GetParamValue('field');
 
   // Required parameters
   s := GetParamValue('bw');
@@ -312,23 +417,26 @@ end;
 procedure OutputResults;
 var
   verif_suffix: string;
+  resolvedField: string;
 begin
   // Field-specific output
   if fieldOutput <> '' then
   begin
-    if (fieldOutput = 'Mrd') or (fieldOutput = 'mrd') then
+    resolvedField := ResolveFieldName(fieldOutput);
+    
+    if (resolvedField = 'Mrd') or (LowerCase(resolvedField) = 'mrd') then
       WriteLn(Mrd:0:2)
-    else if (fieldOutput = 'x') then
+    else if (LowerCase(resolvedField) = 'x') then
       WriteLn(x:0:2)
-    else if (fieldOutput = 'dominio') then
+    else if (LowerCase(resolvedField) = 'dominio') then
       WriteLn(dominio)
-    else if (fieldOutput = 'verificacao') then
+    else if (LowerCase(resolvedField) = 'verificacao') then
       WriteLn(verificacao)
     else
     begin
       WriteLn(StdErr, 'Error: Unknown field "', fieldOutput, '"');
       WriteLn(StdErr, 'Valid fields: Mrd, x, dominio, verificacao');
-      Halt(2);
+      Halt(EXIT_INVALID_ARGS);
     end;
     Exit;
   end;
@@ -340,7 +448,11 @@ begin
     WriteLn('  "Mrd": ', Mrd:0:2, ',');
     WriteLn('  "x": ', x:0:2, ',');
     WriteLn('  "dominio": ', dominio, ',');
-    WriteLn('  "verificacao": "', verificacao, '"');
+    WriteLn('  "verificacao": "', verificacao, '",');
+    if warnings <> '' then
+      WriteLn('  "warnings": "', StringReplace(warnings, LineEnding, ' ', [rfReplaceAll]), '"')
+    else
+      WriteLn('  "warnings": null');
     WriteLn('}');
     Exit;
   end;
@@ -357,6 +469,12 @@ begin
     WriteLn('Dominio:                     ', dominio);
     WriteLn('');
     WriteLn('Verificacao: ', verificacao);
+    if warnings <> '' then
+    begin
+      WriteLn('');
+      WriteLn('WARNINGS:');
+      Write(warnings);
+    end;
     WriteLn('============================================');
     Exit;
   end;
@@ -381,14 +499,15 @@ begin
 
   try
     ParseArguments;
+    ValidateParameters;
     Calculate;
     OutputResults;
-    Halt(0);
+    Halt(EXIT_SUCCESS);
   except
     on E: Exception do
     begin
       WriteLn(StdErr, 'Error: ', E.Message);
-      Halt(1);
+      Halt(EXIT_CALC_ERROR);
     end;
   end;
 end.

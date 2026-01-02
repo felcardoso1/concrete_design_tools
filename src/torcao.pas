@@ -5,6 +5,13 @@ program Torcao;
 uses
   SysUtils, Math;
 
+const
+  EXIT_SUCCESS = 0;
+  EXIT_CALC_ERROR = 1;      // Calculation error (insufficient section, etc.)
+  EXIT_INVALID_ARGS = 2;     // Invalid arguments/parameters
+  EXIT_DOMAIN_4 = 3;         // Domain 4 (brittle failure)
+  EXIT_INVALID_RANGE = 4;    // Parameter out of valid range
+
 var
   // Input variables
   bw, h, dl: Double;
@@ -22,6 +29,22 @@ var
   Aslt: Double;                    // Longitudinal reinforcement for torsion (cm²)
   smax: Double;                    // Maximum spacing (cm)
   verificacao: string;
+  warnings: string;                 // Accumulated warnings (only shown in verbose/JSON)
+
+// Field alias resolution
+function ResolveFieldName(const fieldName: string): string;
+begin
+  Result := LowerCase(fieldName);
+  // Map aliases
+  if (Result = 'asw') then
+    Result := 'Asw'
+  else if (Result = 'as') then
+    Result := 'As_flexao'
+  else if (Result = 'asl') or (Result = 'as''') then
+    Result := 'Asl_flexao'
+  else
+    Result := fieldName;
+end;
 
 // Calculate stress in steel
 function CalcularTensaoAco(es, esl, fyd: Double): Double;
@@ -66,7 +89,21 @@ begin
   WriteLn(StdErr, '  --json     JSON format');
   WriteLn(StdErr, '  --field=X  Output only specific field');
   WriteLn(StdErr, '             Valid fields: Asw, Aswv, Aswt, Aslt, smax, As, Asl, verificacao');
-  Halt(2);
+  WriteLn(StdErr, '             Aliases: As=As_flexao, Asl=Asl_flexao');
+  WriteLn(StdErr, '             Use --field=list to show all fields and aliases');
+  WriteLn(StdErr, '  --version  Show version information');
+  WriteLn(StdErr, '  --help-all Show all available tools');
+  WriteLn(StdErr, '');
+  WriteLn(StdErr, 'Exit Codes:');
+  WriteLn(StdErr, '  0  Success');
+  WriteLn(StdErr, '  1  Calculation error (compression strut crushing)');
+  WriteLn(StdErr, '  2  Invalid arguments');
+  WriteLn(StdErr, '  4  Invalid parameter range');
+  WriteLn(StdErr, '');
+  WriteLn(StdErr, 'Examples:');
+  WriteLn(StdErr, '  torcao --bw=20 --h=50 --dl=3 --fck=25 --fyk=500 --mk=100 --vk=50 --tk=20');
+  WriteLn(StdErr, '  torcao --bw=20 --h=50 --dl=3 --fck=25 --fyk=500 --mk=100 --vk=50 --tk=20 --field=Asw');
+  Halt(EXIT_INVALID_ARGS);
 end;
 
 function GetParamValue(const name: string): string;
@@ -96,16 +133,98 @@ begin
       Exit(True);
 end;
 
+procedure ShowVersion;
+begin
+  WriteLn('torcao v1.0.0');
+  WriteLn('NBR 6118:2014 compliant');
+  WriteLn('Compiled: 2025-12-30');
+  Halt(EXIT_SUCCESS);
+end;
+
+procedure ShowFieldList;
+begin
+  WriteLn('Available fields: Asw, Aswv, Aswt, Aslt, smax, As, Asl, verificacao');
+  WriteLn('Aliases: As=As_flexao, Asl=Asl_flexao');
+  Halt(EXIT_SUCCESS);
+end;
+
+procedure ValidateParameters;
+begin
+  warnings := '';  // Initialize empty
+  
+  // Hard errors (exit immediately)
+  if fck < 10 then
+  begin
+    WriteLn(StdErr, 'ERRO: fck must be >= 10 MPa (received: ', fck:0:1, ' MPa)');
+    WriteLn(StdErr, 'NBR 6118 valid range: 10-90 MPa');
+    Halt(EXIT_INVALID_RANGE);
+  end;
+  
+  if bw < 9 then
+  begin
+    WriteLn(StdErr, 'ERRO: bw must be >= 9 cm (received: ', bw:0:1, ' cm)');
+    Halt(EXIT_INVALID_RANGE);
+  end;
+  
+  if h <= 0 then
+  begin
+    WriteLn(StdErr, 'ERRO: h must be positive (received: ', h:0:1, ' cm)');
+    Halt(EXIT_INVALID_RANGE);
+  end;
+  
+  if dl <= 0 then
+  begin
+    WriteLn(StdErr, 'ERRO: dl must be positive (received: ', dl:0:1, ' cm)');
+    Halt(EXIT_INVALID_RANGE);
+  end;
+  
+  if fyk <= 0 then
+  begin
+    WriteLn(StdErr, 'ERRO: fyk must be positive (received: ', fyk:0:1, ' MPa)');
+    Halt(EXIT_INVALID_RANGE);
+  end;
+  
+  if mk < 0 then
+  begin
+    WriteLn(StdErr, 'ERRO: mk must be non-negative (received: ', mk:0:2, ' kN.m)');
+    Halt(EXIT_INVALID_RANGE);
+  end;
+  
+  if vk < 0 then
+  begin
+    WriteLn(StdErr, 'ERRO: vk must be non-negative (received: ', vk:0:2, ' kN)');
+    Halt(EXIT_INVALID_RANGE);
+  end;
+  
+  if tk < 0 then
+  begin
+    WriteLn(StdErr, 'ERRO: tk must be non-negative (received: ', tk:0:2, ' kN.m)');
+    Halt(EXIT_INVALID_RANGE);
+  end;
+  
+  // Soft warnings (accumulate, show only in verbose/JSON)
+  if fck > 90 then
+    warnings := warnings + 'WARNING: fck=' + FloatToStr(fck) + 
+               ' MPa exceeds 90 MPa. Formulas valid up to 90 MPa.' + LineEnding;
+end;
+
 procedure ParseArguments;
 var
   s: string;
 begin
+  // Handle special flags that don't need parameters first
+  if HasFlag('version') then
+    ShowVersion;
+  
+  fieldOutput := GetParamValue('field');
+  if (fieldOutput = 'list') then
+    ShowFieldList;
+  
   if HasFlag('help') or (ParamCount = 0) then
     ShowUsage;
 
   jsonOutput := HasFlag('json');
   verboseOutput := HasFlag('verbose');
-  fieldOutput := GetParamValue('field');
 
   // Required parameters
   s := GetParamValue('bw');
@@ -243,13 +362,17 @@ begin
     qsia := eu / (eu + 10);
     if qlim < qsia then
     begin
-      verificacao := 'ERRO: Armadura dupla no dominio 2';
+      verificacao := 'ERRO: Double reinforcement in domain 2 not allowed' + LineEnding +
+                     'CURRENT: bw=' + FloatToStr(bw) + 'cm, h=' + FloatToStr(h) + 'cm, Mk=' + FloatToStr(mk) + 'kN.m, fck=' + FloatToStr(fck) + 'MPa' + LineEnding +
+                     'SUGGESTION: Increase section dimensions (h or bw) to avoid domain 2 with double reinforcement';
       Exit;
     end;
 
     if qlim <= delta then
     begin
-      verificacao := 'ERRO: Aumente as dimensoes da secao';
+      verificacao := 'ERRO: Section insufficient - compression steel would be in tension' + LineEnding +
+                     'CURRENT: bw=' + FloatToStr(bw) + 'cm, h=' + FloatToStr(h) + 'cm, Mk=' + FloatToStr(mk) + 'kN.m, fck=' + FloatToStr(fck) + 'MPa' + LineEnding +
+                     'SUGGESTION: Increase section dimensions (h or bw)';
       Exit;
     end;
 
@@ -321,7 +444,9 @@ begin
   soma := ttd / ttu + twd / twu;
   if soma > 1 then
   begin
-    verificacao := 'ERRO: Esmagamento da biela de compressao';
+    verificacao := 'ERRO: Compression strut crushing (combined shear + torsion)' + LineEnding +
+                   'CURRENT: bw=' + FloatToStr(bw) + 'cm, h=' + FloatToStr(h) + 'cm, Vk=' + FloatToStr(vk) + 'kN, Tk=' + FloatToStr(tk) + 'kN.m, fck=' + FloatToStr(fck) + 'MPa' + LineEnding +
+                   'SUGGESTION: Increase section dimensions (bw or h) OR reduce loads';
     Exit;
   end;
 
@@ -395,31 +520,35 @@ end;
 procedure OutputResults;
 var
   verif_suffix: string;
+  resolvedField: string;
 begin
   // Field-specific output
   if fieldOutput <> '' then
   begin
-    if (fieldOutput = 'Asw') or (fieldOutput = 'asw') then
+    resolvedField := ResolveFieldName(fieldOutput);
+    
+    if (resolvedField = 'Asw') or (LowerCase(resolvedField) = 'asw') then
       WriteLn(Asw_total:0:2)
-    else if (fieldOutput = 'Aswv') or (fieldOutput = 'aswv') then
+    else if (LowerCase(resolvedField) = 'aswv') then
       WriteLn(Aswv:0:2)
-    else if (fieldOutput = 'Aswt') or (fieldOutput = 'aswt') then
+    else if (LowerCase(resolvedField) = 'aswt') then
       WriteLn(Aswt:0:2)
-    else if (fieldOutput = 'Aslt') or (fieldOutput = 'aslt') then
+    else if (LowerCase(resolvedField) = 'aslt') then
       WriteLn(Aslt:0:2)
-    else if (fieldOutput = 'smax') then
+    else if (LowerCase(resolvedField) = 'smax') then
       WriteLn(smax:0:1)
-    else if (fieldOutput = 'As') or (fieldOutput = 'as') then
+    else if (resolvedField = 'As_flexao') or (LowerCase(resolvedField) = 'as') then
       WriteLn(As_flexao:0:2)
-    else if (fieldOutput = 'Asl') or (fieldOutput = 'asl') then
+    else if (resolvedField = 'Asl_flexao') or (LowerCase(resolvedField) = 'asl') then
       WriteLn(Asl_flexao:0:2)
-    else if (fieldOutput = 'verificacao') then
+    else if (LowerCase(resolvedField) = 'verificacao') then
       WriteLn(verificacao)
     else
     begin
       WriteLn(StdErr, 'Error: Unknown field "', fieldOutput, '"');
       WriteLn(StdErr, 'Valid fields: Asw, Aswv, Aswt, Aslt, smax, As, Asl, verificacao');
-      Halt(2);
+      WriteLn(StdErr, 'Aliases: As=As_flexao, Asl=Asl_flexao');
+      Halt(EXIT_INVALID_ARGS);
     end;
     Exit;
   end;
@@ -435,7 +564,11 @@ begin
     WriteLn('  "smax": ', smax:0:1, ',');
     WriteLn('  "As_flexao": ', As_flexao:0:2, ',');
     WriteLn('  "Asl_flexao": ', Asl_flexao:0:2, ',');
-    WriteLn('  "verificacao": "', verificacao, '"');
+    WriteLn('  "verificacao": "', verificacao, '",');
+    if warnings <> '' then
+      WriteLn('  "warnings": "', StringReplace(warnings, LineEnding, ' ', [rfReplaceAll]), '"')
+    else
+      WriteLn('  "warnings": null');
     WriteLn('}');
     Exit;
   end;
@@ -459,6 +592,12 @@ begin
     WriteLn('  Para torcao (Aslt):     ', Aslt:8:2, ' cm2');
     WriteLn('');
     WriteLn('Verificacao: ', verificacao);
+    if warnings <> '' then
+    begin
+      WriteLn('');
+      WriteLn('WARNINGS:');
+      Write(warnings);
+    end;
     WriteLn('============================================');
     Exit;
   end;
@@ -484,18 +623,19 @@ begin
 
   try
     ParseArguments;
+    ValidateParameters;
     Calculate;
     OutputResults;
 
     if Pos('ERRO', verificacao) > 0 then
-      Halt(1)
+      Halt(EXIT_CALC_ERROR)
     else
-      Halt(0);
+      Halt(EXIT_SUCCESS);
   except
     on E: Exception do
     begin
       WriteLn(StdErr, 'Error: ', E.Message);
-      Halt(1);
+      Halt(EXIT_CALC_ERROR);
     end;
   end;
 end.

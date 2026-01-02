@@ -5,6 +5,13 @@ program Flexao;
 uses
   SysUtils, Math;
 
+const
+  EXIT_SUCCESS = 0;
+  EXIT_CALC_ERROR = 1;      // Calculation error (insufficient section, etc.)
+  EXIT_INVALID_ARGS = 2;     // Invalid arguments/parameters
+  EXIT_DOMAIN_4 = 3;         // Domain 4 (brittle failure)
+  EXIT_INVALID_RANGE = 4;    // Parameter out of valid range
+
 var
   // Input variables
   bw, h, d, dl: Double;
@@ -20,6 +27,24 @@ var
   dominio: Integer;          // Strain domain
   taxa: Double;              // Reinforcement ratio
   verificacao: string;       // Status message
+  warnings: string;          // Accumulated warnings (only shown in verbose/JSON)
+
+// Field alias resolution
+function ResolveFieldName(const fieldName: string): string;
+begin
+  // Convert to lowercase for case-insensitive matching
+  Result := LowerCase(fieldName);
+  
+  // Map aliases to canonical names
+  if (Result = 'rho') then
+    Result := 'taxa'
+  else if (Result = 'as''') or (Result = 'as_comp') or (Result = 'asl') then
+    Result := 'As_comp'
+  else if (Result = 'as') then
+    Result := 'As'
+  else
+    Result := fieldName; // Return original if no alias (case-sensitive for canonical names)
+end;
 
 // Subroutine to calculate stress in steel
 function CalcularTensaoAco(es, esl, fyd: Double): Double;
@@ -68,7 +93,23 @@ begin
   WriteLn(StdErr, '  --json     JSON format for structured parsing');
   WriteLn(StdErr, '  --field=X  Output only specific field');
   WriteLn(StdErr, '             Valid fields: As, As_comp, dominio, taxa, ami, amilim, verificacao');
-  Halt(2);
+  WriteLn(StdErr, '             Aliases: rho=taxa, As''=As_comp');
+  WriteLn(StdErr, '             Use --field=list to show all fields and aliases');
+  WriteLn(StdErr, '  --version  Show version information');
+  WriteLn(StdErr, '  --help-all Show all available tools');
+  WriteLn(StdErr, '');
+  WriteLn(StdErr, 'Exit Codes:');
+  WriteLn(StdErr, '  0  Success');
+  WriteLn(StdErr, '  1  Calculation error (insufficient section)');
+  WriteLn(StdErr, '  2  Invalid arguments');
+  WriteLn(StdErr, '  3  Domain 4 (brittle failure - section too small)');
+  WriteLn(StdErr, '  4  Invalid parameter range');
+  WriteLn(StdErr, '');
+  WriteLn(StdErr, 'Examples:');
+  WriteLn(StdErr, '  flexao --bw=20 --h=50 --d=46 --fck=25 --fyk=500 --mk=100');
+  WriteLn(StdErr, '  flexao --bw=20 --h=50 --d=46 --fck=25 --fyk=500 --mk=100 --field=As');
+  WriteLn(StdErr, '  flexao --bw=20 --h=50 --d=46 --fck=25 --fyk=500 --mk=100 --field=rho');
+  Halt(EXIT_INVALID_ARGS);
 end;
 
 function GetParamValue(const name: string): string;
@@ -98,16 +139,86 @@ begin
       Exit(True);
 end;
 
+procedure ShowVersion;
+begin
+  WriteLn('flexao v1.0.0');
+  WriteLn('NBR 6118:2014 compliant');
+  WriteLn('Compiled: 2025-12-30');
+  Halt(EXIT_SUCCESS);
+end;
+
+procedure ShowFieldList;
+begin
+  WriteLn('Available fields: As, As_comp, dominio, taxa, ami, amilim, verificacao');
+  WriteLn('Aliases: rho=taxa, As''=As_comp, Asl=As_comp');
+  Halt(EXIT_SUCCESS);
+end;
+
+procedure ValidateParameters;
+begin
+  warnings := '';  // Initialize empty
+  
+  // Hard errors (exit immediately)
+  if fck < 10 then
+  begin
+    WriteLn(StdErr, 'ERRO: fck must be >= 10 MPa (received: ', fck:0:1, ' MPa)');
+    WriteLn(StdErr, 'NBR 6118 valid range: 10-90 MPa');
+    Halt(EXIT_INVALID_RANGE);
+  end;
+  
+  if bw < 9 then
+  begin
+    WriteLn(StdErr, 'ERRO: bw must be >= 9 cm (received: ', bw:0:1, ' cm)');
+    Halt(EXIT_INVALID_RANGE);
+  end;
+  
+  if h <= 0 then
+  begin
+    WriteLn(StdErr, 'ERRO: h must be positive (received: ', h:0:1, ' cm)');
+    Halt(EXIT_INVALID_RANGE);
+  end;
+  
+  if d <= 0 then
+  begin
+    WriteLn(StdErr, 'ERRO: d must be positive (received: ', d:0:1, ' cm)');
+    Halt(EXIT_INVALID_RANGE);
+  end;
+  
+  if fyk <= 0 then
+  begin
+    WriteLn(StdErr, 'ERRO: fyk must be positive (received: ', fyk:0:1, ' MPa)');
+    Halt(EXIT_INVALID_RANGE);
+  end;
+  
+  if mk <= 0 then
+  begin
+    WriteLn(StdErr, 'ERRO: mk must be positive (received: ', mk:0:2, ' kN.m)');
+    Halt(EXIT_INVALID_RANGE);
+  end;
+  
+  // Soft warnings (accumulate, show only in verbose/JSON)
+  if fck > 90 then
+    warnings := warnings + 'WARNING: fck=' + FloatToStr(fck) + 
+               ' MPa exceeds 90 MPa. Formulas valid up to 90 MPa.' + LineEnding;
+end;
+
 procedure ParseArguments;
 var
   s: string;
 begin
+  // Handle special flags that don't need parameters first
+  if HasFlag('version') then
+    ShowVersion;
+  
+  fieldOutput := GetParamValue('field');
+  if (fieldOutput = 'list') then
+    ShowFieldList;
+  
   if HasFlag('help') or (ParamCount = 0) then
     ShowUsage;
 
   jsonOutput := HasFlag('json');
   verboseOutput := HasFlag('verbose');
-  fieldOutput := GetParamValue('field');
 
   // Required parameters
   s := GetParamValue('bw');
@@ -239,7 +350,12 @@ begin
     else if qsi <= qlim then
       dominio := 3
     else
+    begin
       dominio := 4;
+      verificacao := 'ERRO: Section insufficient (Domain 4 - brittle failure)' + LineEnding +
+                     'CURRENT: bw=' + FloatToStr(bw) + 'cm, h=' + FloatToStr(h) + 'cm, d=' + FloatToStr(d) + 'cm, Mk=' + FloatToStr(mk) + 'kN.m, fck=' + FloatToStr(fck_orig) + 'MPa' + LineEnding +
+                     'SUGGESTION: Increase height to h >= ' + FloatToStr(h * 1.2) + 'cm OR increase width to bw >= ' + FloatToStr(bw * 1.2) + 'cm';
+    end;
   end
   else
   begin
@@ -249,7 +365,9 @@ begin
     qsia := eu / (eu + 10);
     if qlim < qsia then
     begin
-      verificacao := 'ERRO: Armadura dupla no dominio 2. Aumente as dimensoes da secao';
+      verificacao := 'ERRO: Double reinforcement in domain 2 not allowed' + LineEnding +
+                     'CURRENT: bw=' + FloatToStr(bw) + 'cm, h=' + FloatToStr(h) + 'cm, d=' + FloatToStr(d) + 'cm, Mk=' + FloatToStr(mk) + 'kN.m, fck=' + FloatToStr(fck_orig) + 'MPa' + LineEnding +
+                     'SUGGESTION: Increase section dimensions (h or bw) to avoid domain 2 with double reinforcement';
       As_trac := 0;
       As_comp := 0;
       dominio := 0;
@@ -259,7 +377,9 @@ begin
     // Eliminate case where qlim < delta (compression steel would be in tension)
     if qlim <= delta then
     begin
-      verificacao := 'ERRO: Aumente as dimensoes da secao transversal';
+      verificacao := 'ERRO: Section insufficient - compression steel would be in tension' + LineEnding +
+                     'CURRENT: bw=' + FloatToStr(bw) + 'cm, h=' + FloatToStr(h) + 'cm, d=' + FloatToStr(d) + 'cm, Mk=' + FloatToStr(mk) + 'kN.m, fck=' + FloatToStr(fck_orig) + 'MPa' + LineEnding +
+                     'SUGGESTION: Increase section dimensions (h or bw)';
       As_trac := 0;
       As_comp := 0;
       dominio := 0;
@@ -308,29 +428,33 @@ end;
 procedure OutputResults;
 var
   verif_suffix: string;
+  resolvedField: string;
 begin
   // Field-specific output (highest priority)
   if fieldOutput <> '' then
   begin
-    if (fieldOutput = 'As') or (fieldOutput = 'as') then
+    resolvedField := ResolveFieldName(fieldOutput);
+    
+    if (resolvedField = 'As') then
       WriteLn(As_trac:0:2)
-    else if (fieldOutput = 'As_comp') or (fieldOutput = 'as_comp') or (fieldOutput = 'Asl') or (fieldOutput = 'As''') then
+    else if (resolvedField = 'As_comp') then
       WriteLn(As_comp:0:2)
-    else if fieldOutput = 'dominio' then
+    else if (LowerCase(resolvedField) = 'dominio') then
       WriteLn(dominio)
-    else if fieldOutput = 'taxa' then
+    else if (resolvedField = 'taxa') then
       WriteLn(taxa:0:4)
-    else if fieldOutput = 'ami' then
+    else if (LowerCase(resolvedField) = 'ami') then
       WriteLn(ami:0:6)
-    else if fieldOutput = 'amilim' then
+    else if (LowerCase(resolvedField) = 'amilim') then
       WriteLn(amilim:0:6)
-    else if fieldOutput = 'verificacao' then
+    else if (LowerCase(resolvedField) = 'verificacao') then
       WriteLn(verificacao)
     else
     begin
       WriteLn(StdErr, 'Error: Unknown field "', fieldOutput, '"');
       WriteLn(StdErr, 'Valid fields: As, As_comp, dominio, taxa, ami, amilim, verificacao');
-      Halt(2);
+      WriteLn(StdErr, 'Aliases: rho=taxa, As''=As_comp');
+      Halt(EXIT_INVALID_ARGS);
     end;
     Exit;
   end;
@@ -345,7 +469,11 @@ begin
     WriteLn('  "taxa": ', taxa:0:4, ',');
     WriteLn('  "ami": ', ami:0:6, ',');
     WriteLn('  "amilim": ', amilim:0:6, ',');
-    WriteLn('  "verificacao": "', verificacao, '"');
+    WriteLn('  "verificacao": "', verificacao, '",');
+    if warnings <> '' then
+      WriteLn('  "warnings": "', StringReplace(warnings, LineEnding, ' ', [rfReplaceAll]), '"')
+    else
+      WriteLn('  "warnings": null');
     WriteLn('}');
     Exit;
   end;
@@ -365,6 +493,12 @@ begin
     WriteLn('Momento limite (μlim):     ', amilim:8:6);
     WriteLn('');
     WriteLn('Verificacao: ', verificacao);
+    if warnings <> '' then
+    begin
+      WriteLn('');
+      WriteLn('WARNINGS:');
+      Write(warnings);
+    end;
     WriteLn('============================================');
     Exit;
   end;
@@ -392,19 +526,25 @@ begin
 
   try
     ParseArguments;
+    ValidateParameters;
     Calculate;
     OutputResults;
 
     // Exit code based on verification
     if Pos('ERRO', verificacao) > 0 then
-      Halt(1)
+    begin
+      if dominio = 4 then
+        Halt(EXIT_DOMAIN_4)
+      else
+        Halt(EXIT_CALC_ERROR);
+    end
     else
-      Halt(0);
+      Halt(EXIT_SUCCESS);
   except
     on E: Exception do
     begin
       WriteLn(StdErr, 'Error: ', E.Message);
-      Halt(1);
+      Halt(EXIT_CALC_ERROR);
     end;
   end;
 end.

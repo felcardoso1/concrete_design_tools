@@ -5,6 +5,13 @@ program FlexoCompressao;
 uses
   SysUtils, Math;
 
+const
+  EXIT_SUCCESS = 0;
+  EXIT_CALC_ERROR = 1;      // Calculation error (insufficient section, etc.)
+  EXIT_INVALID_ARGS = 2;     // Invalid arguments/parameters
+  EXIT_DOMAIN_4 = 3;         // Domain 4 (brittle failure)
+  EXIT_INVALID_RANGE = 4;    // Parameter out of valid range
+
 var
   // Input variables
   bw, h, dl: Double;
@@ -21,12 +28,28 @@ var
   x: Double;            // Neutral axis depth
   dominio: Integer;     // Strain domain
   verificacao: string;
+  warnings: string;      // Accumulated warnings (only shown in verbose/JSON)
 
   // Intermediate variables for calculation
   alamb, alfac, eu, e0, akapa: Double;
   fcd, tcd, fyd: Double;
   delta, ani, ami: Double;
   qlim: Double;
+
+// Field alias resolution
+function ResolveFieldName(const fieldName: string): string;
+begin
+  Result := LowerCase(fieldName);
+  // Map aliases
+  if (Result = 'as') then
+    Result := 'As_adopt'
+  else if (Result = 'asmin') or (Result = 'as_min') then
+    Result := 'As_min'
+  else if (Result = 'asadopt') or (Result = 'as_adopt') then
+    Result := 'As_adopt'
+  else
+    Result := fieldName;
+end;
 
 // Calculate stress in steel
 function CalcularTensaoAco(es_val, esl, fyd_val: Double): Double;
@@ -69,7 +92,21 @@ begin
   WriteLn(StdErr, '  --json     JSON format');
   WriteLn(StdErr, '  --field=X  Output only specific field');
   WriteLn(StdErr, '             Valid fields: As, Asmin, Asadopt, dominio, x, verificacao');
-  Halt(2);
+  WriteLn(StdErr, '             Aliases: As=As_adopt, Asmin=As_min');
+  WriteLn(StdErr, '             Use --field=list to show all fields and aliases');
+  WriteLn(StdErr, '  --version  Show version information');
+  WriteLn(StdErr, '  --help-all Show all available tools');
+  WriteLn(StdErr, '');
+  WriteLn(StdErr, 'Exit Codes:');
+  WriteLn(StdErr, '  0  Success');
+  WriteLn(StdErr, '  1  Calculation error');
+  WriteLn(StdErr, '  2  Invalid arguments');
+  WriteLn(StdErr, '  4  Invalid parameter range');
+  WriteLn(StdErr, '');
+  WriteLn(StdErr, 'Examples:');
+  WriteLn(StdErr, '  flexo_compressao --bw=20 --h=50 --dl=3 --nk=500 --mk=100 --fck=25 --fyk=500');
+  WriteLn(StdErr, '  flexo_compressao --bw=20 --h=50 --dl=3 --nk=500 --mk=100 --fck=25 --fyk=500 --field=As');
+  Halt(EXIT_INVALID_ARGS);
 end;
 
 function GetParamValue(const name: string): string;
@@ -99,16 +136,93 @@ begin
       Exit(True);
 end;
 
+procedure ShowVersion;
+begin
+  WriteLn('flexo_compressao v1.0.0');
+  WriteLn('NBR 6118:2014 compliant');
+  WriteLn('Compiled: 2025-12-30');
+  Halt(EXIT_SUCCESS);
+end;
+
+procedure ShowFieldList;
+begin
+  WriteLn('Available fields: As, Asmin, Asadopt, dominio, x, verificacao');
+  WriteLn('Aliases: As=As_adopt, Asmin=As_min');
+  Halt(EXIT_SUCCESS);
+end;
+
+procedure ValidateParameters;
+begin
+  warnings := '';  // Initialize empty
+  
+  // Hard errors (exit immediately)
+  if fck < 10 then
+  begin
+    WriteLn(StdErr, 'ERRO: fck must be >= 10 MPa (received: ', fck:0:1, ' MPa)');
+    WriteLn(StdErr, 'NBR 6118 valid range: 10-90 MPa');
+    Halt(EXIT_INVALID_RANGE);
+  end;
+  
+  if bw < 9 then
+  begin
+    WriteLn(StdErr, 'ERRO: bw must be >= 9 cm (received: ', bw:0:1, ' cm)');
+    Halt(EXIT_INVALID_RANGE);
+  end;
+  
+  if h <= 0 then
+  begin
+    WriteLn(StdErr, 'ERRO: h must be positive (received: ', h:0:1, ' cm)');
+    Halt(EXIT_INVALID_RANGE);
+  end;
+  
+  if dl <= 0 then
+  begin
+    WriteLn(StdErr, 'ERRO: dl must be positive (received: ', dl:0:1, ' cm)');
+    Halt(EXIT_INVALID_RANGE);
+  end;
+  
+  if fyk <= 0 then
+  begin
+    WriteLn(StdErr, 'ERRO: fyk must be positive (received: ', fyk:0:1, ' MPa)');
+    Halt(EXIT_INVALID_RANGE);
+  end;
+  
+  if mk < 0 then
+  begin
+    WriteLn(StdErr, 'ERRO: mk must be non-negative (received: ', mk:0:2, ' kN.m)');
+    Halt(EXIT_INVALID_RANGE);
+  end;
+  
+  if nk <= 0 then
+  begin
+    WriteLn(StdErr, 'ERRO: nk must be positive for compression (received: ', nk:0:2, ' kN)');
+    WriteLn(StdErr, 'Note: nk > 0 means compression force');
+    Halt(EXIT_INVALID_RANGE);
+  end;
+  
+  // Soft warnings (accumulate, show only in verbose/JSON)
+  if fck > 90 then
+    warnings := warnings + 'WARNING: fck=' + FloatToStr(fck) + 
+               ' MPa exceeds 90 MPa. Formulas valid up to 90 MPa.' + LineEnding;
+end;
+
 procedure ParseArguments;
 var
   s: string;
 begin
+  // Handle special flags that don't need parameters first
+  if HasFlag('version') then
+    ShowVersion;
+  
+  fieldOutput := GetParamValue('field');
+  if (fieldOutput = 'list') then
+    ShowFieldList;
+  
   if HasFlag('help') or (ParamCount = 0) then
     ShowUsage;
 
   jsonOutput := HasFlag('json');
   verboseOutput := HasFlag('verbose');
-  fieldOutput := GetParamValue('field');
 
   // Required parameters
   s := GetParamValue('bw');
@@ -378,27 +492,31 @@ end;
 procedure OutputResults;
 var
   verif_suffix: string;
+  resolvedField: string;
 begin
   // Field-specific output
   if fieldOutput <> '' then
   begin
-    if (fieldOutput = 'As') or (fieldOutput = 'as') then
-      WriteLn(As_calc:0:2)
-    else if (fieldOutput = 'Asmin') or (fieldOutput = 'asmin') then
-      WriteLn(As_min:0:2)
-    else if (fieldOutput = 'Asadopt') or (fieldOutput = 'asadopt') then
+    resolvedField := ResolveFieldName(fieldOutput);
+    
+    if (resolvedField = 'As_adopt') or (LowerCase(resolvedField) = 'as') then
       WriteLn(As_adopt:0:2)
-    else if (fieldOutput = 'dominio') then
+    else if (resolvedField = 'As_min') or (LowerCase(resolvedField) = 'asmin') then
+      WriteLn(As_min:0:2)
+    else if (LowerCase(resolvedField) = 'asadopt') or (LowerCase(resolvedField) = 'as_adopt') then
+      WriteLn(As_adopt:0:2)
+    else if (LowerCase(resolvedField) = 'dominio') then
       WriteLn(dominio)
-    else if (fieldOutput = 'x') then
+    else if (LowerCase(resolvedField) = 'x') then
       WriteLn(x:0:2)
-    else if (fieldOutput = 'verificacao') then
+    else if (LowerCase(resolvedField) = 'verificacao') then
       WriteLn(verificacao)
     else
     begin
       WriteLn(StdErr, 'Error: Unknown field "', fieldOutput, '"');
       WriteLn(StdErr, 'Valid fields: As, Asmin, Asadopt, dominio, x, verificacao');
-      Halt(2);
+      WriteLn(StdErr, 'Aliases: As=As_adopt, Asmin=As_min');
+      Halt(EXIT_INVALID_ARGS);
     end;
     Exit;
   end;
@@ -412,7 +530,11 @@ begin
     WriteLn('  "Asadopt": ', As_adopt:0:2, ',');
     WriteLn('  "x": ', x:0:2, ',');
     WriteLn('  "dominio": ', dominio, ',');
-    WriteLn('  "verificacao": "', verificacao, '"');
+    WriteLn('  "verificacao": "', verificacao, '",');
+    if warnings <> '' then
+      WriteLn('  "warnings": "', StringReplace(warnings, LineEnding, ' ', [rfReplaceAll]), '"')
+    else
+      WriteLn('  "warnings": null');
     WriteLn('}');
     Exit;
   end;
@@ -431,6 +553,12 @@ begin
     WriteLn('Dominio:                    ', dominio);
     WriteLn('');
     WriteLn('Verificacao: ', verificacao);
+    if warnings <> '' then
+    begin
+      WriteLn('');
+      WriteLn('WARNINGS:');
+      Write(warnings);
+    end;
     WriteLn('============================================');
     Exit;
   end;
@@ -457,18 +585,19 @@ begin
 
   try
     ParseArguments;
+    ValidateParameters;
     Calculate;
     OutputResults;
 
     if Pos('ERRO', verificacao) > 0 then
-      Halt(1)
+      Halt(EXIT_CALC_ERROR)
     else
-      Halt(0);
+      Halt(EXIT_SUCCESS);
   except
     on E: Exception do
     begin
       WriteLn(StdErr, 'Error: ', E.Message);
-      Halt(1);
+      Halt(EXIT_CALC_ERROR);
     end;
   end;
 end.
