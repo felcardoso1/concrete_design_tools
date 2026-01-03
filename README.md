@@ -183,9 +183,9 @@ echo "Number of bars needed: $(echo "scale=1; $AS / 1.23" | bc)"
 
 **For developers:**
 - **[CONTRIBUTING.md](CONTRIBUTING.md)**: Development guide for contributors
-- **[CLAUDE.md](CLAUDE.md)**: Instructions for AI agents working on this codebase
+- **[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)**: Internal development notes
 
-**For users (engineers):**
+**For users (engineers and AI agents):**
 - **[AGENT/AGENTS.md](AGENT/AGENTS.md)**: Quick reference for AI agents using the tools
 - **[AGENT/SKILLS.md](AGENT/SKILLS.md)**: Detailed tool documentation and workflows
 
@@ -199,26 +199,31 @@ echo "Number of bars needed: $(echo "scale=1; $AS / 1.23" | bc)"
 ├── README.md              # This file (developer-facing)
 ├── LICENSE                # MIT License
 ├── CONTRIBUTING.md        # Development guide
-├── CLAUDE.md              # AI agent instructions (for developers)
-├── build.sh               # Build script (compiles to AGENT/)
+├── CHANGELOG.md           # Version history
+├── build.sh               # Build script (Linux/macOS)
+├── build.bat              # Build script (Windows)
 ├── src/                   # Pascal source files
 │   ├── flexao.pas         # Bending design
 │   ├── cisalhamento.pas   # Shear design
 │   └── ...
+├── docs/                  # Developer documentation
+│   ├── DEVELOPMENT.md
+│   ├── BINARY_SIZE_OPTIMIZATION.md
+│   └── Smart linking.md
 ├── agent-tests/           # AI agent testing framework
 │   ├── README.md          # Testing methodology
+│   ├── interview-template.md
 │   ├── tasks/             # Task definitions
-│   ├── sessions/          # Test results
-│   └── archive/           # Historical sessions
+│   └── archive/           # Historical test sessions
 └── AGENT/                 # Production folder (distribute this!)
-    ├── AGENTS.md          # AI agent quick reference
+    ├── AGENTS.md          # Quick reference for AI agents
     ├── SKILLS.md          # Detailed tool documentation
     ├── flexao             # Compiled binaries
     ├── cisalhamento
     └── ...
 ```
 
-### For Engineers (End Users)
+### For Engineers and AI Agents
 
 The `AGENT/` folder is self-contained and can be distributed independently. It contains:
 - All compiled binaries (ready to use)
