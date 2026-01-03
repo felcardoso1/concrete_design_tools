@@ -9,9 +9,14 @@ Contributions are welcome! This project provides CLI tools for reinforced concre
 
 ### Compilation
 ```bash
-cd src
-fpc -O2 -Xs toolname.pas
-mv toolname ../bin/
+# Build all tools (Linux/macOS)
+./build.sh
+
+# Build all tools (Windows)
+build.bat
+
+# Or compile a single tool manually
+fpc -O2 -Xs -XX -CX -o./AGENT/flexao src/flexao.pas
 ```
 
 ## Tool Conventions
@@ -54,8 +59,6 @@ All tools must support four output modes:
 ## Algorithm Reference
 
 Algorithms are based on "PROGRAMAS PARA DIMENSIONAMENTO E VERIFICAÇÃO DE CONCRETO ARMADO" by José Milton de Araújo, following NBR 6118:2014.
-
-Source files are in `reference_book/` (Fortran 90 format).
 
 ## Pull Request Guidelines
 
