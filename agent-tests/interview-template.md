@@ -195,7 +195,7 @@ Please structure your response as:
 
 ## Part 2: Friction Assessment
 [Your ratings and answers to questions 10-15]
-
+w
 ## Part 3: Comparison and Effectiveness
 [Your answers to questions 16-20]
 

@@ -19,9 +19,15 @@
 *.identcache
 *.tvsconfig
 
-# Compiled binaries directory
+# Compiled binaries directory (legacy)
 bin/*.exe
 bin/*.o
+
+# AGENT folder - binaries are built locally, keep only documentation
+AGENT/
+!AGENT/AGENTS.md
+!AGENT/SKILLS.md
+!AGENT/*.md
 
 # Python
 __pycache__/
@@ -53,5 +59,14 @@ nul
 
 # Test artifacts
 test_sandbox/*.exe
+
+# Internal development files (not for public repo)
+Test sessions/
+Test setup/
+helloworld.pas
+prompt*.md
+IMPROVEMENTS.md
+IMPLEMENTATION_PLAN.md
+test_sandbox/
 
 

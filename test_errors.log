@@ -1,0 +1,5 @@
+Test Error Report - sáb 03 jan 2026 11:57:30 -03
+================================
+
+FAIL: flexao: domain 4 / section too small (exit 3) | Command: ./AGENT/flexao --bw=10 --h=15 --d=12 --fck=20 --fyk=500 --mk=50 | Expected exit: 3, Got: 0 | Output: As=15.01 As'=13.81 dominio=3 rho=10.01 [OK__Armadura_dupla]
+---

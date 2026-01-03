@@ -2,16 +2,13 @@
 
 This document explains how to use the structural engineering CLI tools during AI-assisted engineering discussions and design sessions.
 
-## ⚠️ QUICK START (Windows)
-
-**You are running on Windows.** All tools are `.exe` files in the current directory.
-
+## QUICK START
 **Always use `./` or `.\` prefix:**
 ```bash
-# Git Bash / WSL:
-./flexao.exe --bw=20 --h=50 --d=46 --fck=25 --fyk=500 --mk=120
+# Bash / Linux :
+./flexao --bw=20 --h=50 --d=46 --fck=25 --fyk=500 --mk=120
 
-# PowerShell / CMD:
+# PowerShell / CMD / Windows:
 .\flexao.exe --bw=20 --h=50 --d=46 --fck=25 --fyk=500 --mk=120
 ```
 
@@ -32,8 +29,6 @@ This document explains how to use the structural engineering CLI tools during AI
 ## Overview
 
 These are Unix-style CLI tools for structural engineering calculations. They support piping, chaining, and standard output redirection for integration into automated workflows.
-
-**Platform:** Windows (`.exe` files). Always use `./` prefix when calling tools.
 
 ## Available Tools
 
@@ -226,6 +221,106 @@ for bw in 15 20 25; do
   ./cisalhamento.exe --bw=$bw --d=45 --fck=25 --fyk=500 --vk=100 --field=Asw
 done
 ```
+
+---
+
+### flexaot - T-Beam Bending Design
+
+Designs reinforcement for T-shaped sections (slab-beam connection) according to NBR 6118.
+
+#### Quick Reference
+
+```bash
+# Concise output (default)
+./flexaot --bf=100 --hf=10 --bw=20 --h=50 --d=46 --fck=25 --fyk=500 --mk=120
+# Output: As=5.67 As'=0.00 dominio=2
+
+# Get only steel area
+./flexaot --bf=100 --hf=10 --bw=20 --h=50 --d=46 --fck=25 --fyk=500 --mk=120 --field=As
+# Output: 5.67
+
+# Verbose output
+./flexaot --bf=100 --hf=10 --bw=20 --h=50 --d=46 --fck=25 --fyk=500 --mk=120 --verbose
+```
+
+#### Parameters
+
+**Required:**
+- `--bf`: Flange width (cm) - slab width connected to the beam
+- `--hf`: Flange thickness (cm) - slab thickness
+- `--bw`: Web width (cm) - beam stem width
+- `--h`: Total section height (cm)
+- `--d`: Effective depth (cm) - typically h minus cover (3-4 cm)
+- `--fck`: Concrete characteristic strength (MPa)
+- `--fyk`: Steel yield strength (MPa)
+- `--mk`: Characteristic bending moment (kN.m)
+
+**Optional:**
+- `--dl`: Distance to compression steel (cm), default: 0.1*d
+- `--es`: Steel elastic modulus (GPa), default: 200
+- `--gamac`: Concrete safety factor, default: 1.4
+- `--gamas`: Steel safety factor, default: 1.15
+- `--gamaf`: Load safety factor, default: 1.4
+- `--bduct`: Ductility coefficient, default: 1.0
+
+**Output Control:**
+- `--verbose`, `--json`, `--field=X`
+
+#### Output Fields
+
+- `As`: Required tensile reinforcement area (cm²)
+- `As_comp`: Required compression reinforcement area (cm²)
+- `dominio`: Strain domain (2, 3, or 4)
+- `taxa`: Reinforcement ratio (%)
+- `ami`: Reduced applied moment
+- `amilim`: Limit moment
+- `verificacao`: Status (OK, ERRO_...)
+
+#### Usage Examples
+
+```bash
+# Typical T-beam in slab-beam construction
+./flexaot --bf=120 --hf=12 --bw=25 --h=60 --d=55 --fck=25 --fyk=500 --mk=180
+
+# Check if flange is too thick (becomes rectangular)
+./flexaot --bf=80 --hf=25 --bw=20 --h=50 --d=45 --fck=25 --fyk=500 --mk=100
+# If ERRO: Flange too thick - use rectangular section with width bf
+
+# Compare with rectangular section
+./flexao --bw=100 --h=12 --d=9 --fck=25 --fyk=500 --mk=50
+# vs
+./flexaot --bf=100 --hf=12 --bw=20 --h=50 --d=46 --fck=25 --fyk=500 --mk=100
+```
+
+#### Engineering Notes
+
+**When to use flexaot:**
+- Beam-slab connections in monolithic construction
+- Ribbed slabs (vigas de capeamento)
+- L-beams (edge beams with slab on one side)
+- Any beam with significant slab participation in compression
+
+**T-beam geometry:**
+```
+    ┌────────── bf ──────────┐
+    ├────────────────────────┤ hf
+    │        ╔══════╗        │
+    │        ║      ║        │
+    │        ║      ║        │
+    │        ║      ║ bw     │
+    │        ║      ║        │
+    │        ║      ║        │
+    │        ╚══════╝        │
+    └────────────────────────┘
+              h
+```
+
+**Effective flange width (bf):** NBR 6118 limits bf to:
+- 1/10 of beam span
+- 2 × (distance to adjacent beam) + bw
+- 1/2 × (distance to adjacent beam) + bw for edge beams
+
+**Warning - rectangular check:** If hf is too large relative to d, the tool returns an error suggesting to use rectangular section design. This happens when the flange thickness exceeds the neutral axis position.
 
 ---
 

@@ -1,4 +1,0 @@
-The task you just fulfilled was a setup to test the tools you used for concrete design.
-Since you are the target user of these tools (these tools were made aimed at AI agents instead of human reading), write in a .md file your impressions of these new tools. 
-What was your experience with it? Are the tools useful, better than doing the calculations inside the LLM? What went well, what could be improved? What did you like and dislike about the tools? Were they easy to find? What about the documentation to use it? The CLAUDE.MD and the SKILLS.MD documentation in particular, were they useful and easy to use?  Are they too verbose with text unecessary for the use of the tools? Are they too brief?
-Suggest improvements to the tools and its respective documentation.
